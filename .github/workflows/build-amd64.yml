@@ -27,18 +27,32 @@ jobs:
           from pathlib import Path
 
           p = Path("pkg/tapo/producer.go")
-          s = p.read_text()
+          lines = p.read_text().splitlines()
+          out = []
+          i = 0
+          patched = False
 
-          old = "\tif err := c.SetupStream(); err != nil;\n\t\treturn nil, err\n\t}\n"
-          if old not in s:
+          while i < len(lines):
+              if (
+                  i + 2 < len(lines)
+                  and lines[i].strip() == "if err := c.SetupStream(); err != nil {"
+                  and lines[i + 1].strip() == "return nil, err"
+                  and lines[i + 2].strip() == "}"
+              ):
+                  out.extend([
+                      "\t// Tapo has one audio session. Do not start the proprietary preview stream here.",
+                      "\t// RTSP owns video/audio while SetupBackchannel() handles PC-to-camera audio."
+                  ])
+                  i += 3
+                  patched = True
+                  continue
+              out.append(lines[i])
+              i += 1
+
+          if not patched:
               raise SystemExit("ERROR: SetupStream block not found in current go2rtc master")
 
-          new = (
-              "\t// Tapo has one audio session. Do not start the proprietary preview "
-              "stream here; RTSP owns video/audio while SetupBackchannel() handles "
-              "PC-to-camera audio.\n"
-          )
-          p.write_text(s.replace(old, new, 1))
+          p.write_text("\n".join(out) + "\n")
           PY
 
       - name: Verify patch
