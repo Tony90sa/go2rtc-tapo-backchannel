@@ -1,0 +1,58 @@
+name: Build patched go2rtc AMD64 for Tapo backchannel
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout go2rtc
+        uses: actions/checkout@v4
+        with:
+          repository: AlexxIT/go2rtc
+          ref: master
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Apply Tapo patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("pkg/tapo/producer.go")
+          s = p.read_text()
+
+          old = "\tif err := c.SetupStream(); err != nil;\n\t\treturn nil, err\n\t}\n"
+          if old not in s:
+              raise SystemExit("ERROR: SetupStream block not found in current go2rtc master")
+
+          new = (
+              "\t// Tapo has one audio session. Do not start the proprietary preview "
+              "stream here; RTSP owns video/audio while SetupBackchannel() handles "
+              "PC-to-camera audio.\n"
+          )
+          p.write_text(s.replace(old, new, 1))
+          PY
+
+      - name: Verify patch
+        run: grep -A2 -B2 "Tapo has one audio session" pkg/tapo/producer.go
+
+      - name: Build AMD64
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: go build -ldflags "-s -w" -trimpath -o go2rtc
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: go2rtc-linux-amd64-tapo-backchannel
+          path: go2rtc
