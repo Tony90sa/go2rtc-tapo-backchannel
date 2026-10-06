@@ -1,0 +1,56 @@
+name: Build patched go2rtc for Tapo backchannel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: 0
+      GOOS: linux
+      GOARCH: arm64
+
+    steps:
+      - name: Checkout go2rtc master
+        uses: actions/checkout@v4
+        with:
+          repository: AlexxIT/go2rtc
+          ref: master
+
+      - name: Apply Tapo backchannel patch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("pkg/tapo/producer.go")
+          text = path.read_text()
+
+          old = '''\tif err := c.SetupStream(); err != nil {
+\t\treturn nil, err
+\t}
+'''
+          if old not in text:
+              raise SystemExit("Tapo SetupStream block not found; source changed.")
+
+          text = text.replace(old, '''\t// Do not call SetupStream here.
+\t// Tapo cameras have a single audio session. Starting the proprietary
+\t// preview stream can steal the audio session from the RTSP producer.
+\t// SetupBackchannel() remains available for PC -> camera speaker audio.
+''', 1)
+
+          path.write_text(text)
+          PY
+
+      - name: Verify patch
+        run: |
+          grep -A5 -B3 "Do not call SetupStream" pkg/tapo/producer.go
+
+      - name: Build go2rtc ARM64
+        run: go build -ldflags "-s -w" -trimpath
+
+      - name: Upload patched binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: go2rtc-linux-arm64-tapo-backchannel
+          path: go2rtc
